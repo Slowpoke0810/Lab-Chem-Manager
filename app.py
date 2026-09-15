@@ -3,37 +3,43 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import chemparse
+import json
 
 # ==========================================
-# 1. 初始化與 Google Sheets 的連線
+# 1. 初始化與 Google Sheets 的連線 (支援本地與雲端)
 # ==========================================
 # 設定權限範圍
 scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets',
          "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
 
-# 將憑證 (剛剛下載的 json) 與權限綁定
-# 請確保 credentials.json 和這支程式在同一個資料夾
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+# 🌟 智慧判斷：如果是在雲端 (有設定 secrets)，就讀取雲端金鑰；如果在本地，就讀取 json 檔
+try:
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+except Exception as e:
+    st.error(f"金鑰讀取失敗，請確認 Secrets 格式是否正確。錯誤訊息: {e}")
+    st.stop()
+
 client = gspread.authorize(creds)
 
-# 把網址換成你的
+# 你的 Google Sheets 網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1qLRCXilpTwH9LA3yTxL87gnPGfZg4NlBcMgL6NAAsqw/edit?usp=sharing" 
-
-# 直接讀取，不加 try...except
-sheet = client.open_by_url(SPREADSHEET_URL).sheet1 
-#try:
-#   sheet = client.open_by_url(SPREADSHEET_URL).sheet1
-#except Exception as e:
-#    st.error(f"讀取網址時發生錯誤，請確認網址正確且權限已開啟！錯誤細節: {e}")
-#    st.stop()
-
-# 直接讀取，不加 try...except
 sheet = client.open_by_url(SPREADSHEET_URL).sheet1
 
-# 取得資料並轉為 DataFrame 方便處理
+# 取得資料並轉為 DataFrame
 raw_data = sheet.get_all_values()
-headers = raw_data[0] # 第一列當作標題
-df = pd.DataFrame(raw_data[1:], columns=headers) # 第二列開始當作資料
+headers = raw_data[0] 
+df = pd.DataFrame(raw_data[1:], columns=headers)
+
+# 動態抓取重量欄位名稱
+date_col = [col for col in df.columns if '2026' in col or '2025' in col] 
+weight_col_name = date_col[0] if date_col else '重量紀錄 (g)' 
+
+# ==========================================
+# (下方接著原本的 2. 定義原子量字典...)
 
 # ==========================================
 # 2. 定義原子量字典 (完整版)
