@@ -87,7 +87,7 @@ with tab2:
     st.subheader("化合物重量計算與庫存檢查")
     col1, col2 = st.columns(2)
     with col1:
-        formula_input = st.text_input("請輸入化合物化學式 (例: ZnIn2S4, ZrSnS3)", value="ZrSnS3")
+        formula_input = st.text_input("請輸入化合物化學式 (例: ZnIn2S4, ZrSnS3, InP)", value="ZrSnS3")
     with col2:
         target_weight = st.number_input("目標總重量 (g)", min_value=0.1, value=10.0, step=0.1)
         
@@ -109,7 +109,12 @@ with tab2:
                     req_weight = (element_masses[elem] / total_molar_mass) * target_weight
                     req_weight = round(req_weight, 4)
                     
-                    inventory = df[df['元素'].astype(str).str.strip() == elem]
+                    # 💡 元素別名對照：讓系統知道 P 就是紅磷
+                    search_targets = [elem]
+                    if elem == 'P':
+                        search_targets.extend(['紅磷', '赤磷'])
+                    
+                    inventory = df[df['元素'].astype(str).str.strip().isin(search_targets)]
                     if inventory.empty:
                         st.error(f"❌ **{elem}**: 需要 **{req_weight}g** ｜ 庫存: **未找到該藥品紀錄**")
                     else:
@@ -118,10 +123,15 @@ with tab2:
                         bottle_details = [] 
                         
                         for idx, row in inventory.iterrows():
+                            # 抓取表格上實際寫的名稱，如果不是原始符號就用【】標註
+                            actual_name = str(row.get('元素', '')).strip()
                             brand = str(row.get('廠商/品牌', '')).strip()
                             purity = str(row.get('純度(%)', '')).strip()
-                            bottle_name = f"{brand} ({purity})" if purity else brand
-                            if not bottle_name: bottle_name = f"第 {len(bottle_details)+1} 罐"
+                            
+                            prefix = f"【{actual_name}】" if actual_name != elem else ""
+                            bottle_name = f"{prefix}{brand} ({purity})" if purity else f"{prefix}{brand}"
+                            if not bottle_name.strip(): 
+                                bottle_name = f"{prefix}第 {len(bottle_details)+1} 罐"
                                 
                             current_weight_str = str(row.get(weight_col_name, '')).strip()
                             status = str(row.get('系統判定狀態', '')).strip()
@@ -149,7 +159,7 @@ with tab2:
             except Exception as e:
                 st.error(f"解析錯誤: {e}")
 
-# --- 標籤頁 3：庫存管理 (新增/刪除/更新) ---
+# --- 標籤頁 3：庫存管理 (新增/更新) ---
 with tab3:
     st.header("📝 藥品庫存管理")
     
@@ -169,9 +179,7 @@ with tab3:
     
     if st.button("更新重量"):
         try:
-            # 從字串中擷取行號
             row_idx = int(selected_option.split("(行號: ")[1].replace(")", ""))
-            # 找到重量欄位對應的列號 (1-based index)
             col_idx = headers.index(weight_col_name) + 1
             sheet.update_cell(row_idx, col_idx, new_w)
             st.success("✅ 更新成功！請按 F5 重新整理網頁。")
