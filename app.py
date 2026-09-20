@@ -4,6 +4,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import chemparse
 import json
+import os   # 🌟 新增這行：用來檢查檔案是否存在
 
 # ==========================================
 # 1. 初始化與 Google Sheets 的連線 (支援本地與雲端)
@@ -12,16 +13,18 @@ import json
 scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets',
          "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
 
-# 🌟 智慧判斷：如果是在雲端 (有設定 secrets)，就讀取雲端金鑰；如果在本地，就讀取 json 檔
-try:
-    if "gcp_service_account" in st.secrets:
+# 🌟 終極智慧判斷邏輯：
+# 如果同一個資料夾底下有 "credentials.json" (代表是你的本地電腦)，就直接用它！
+if os.path.exists("credentials.json"):
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+else:
+    # 如果找不到 json 檔 (代表是在 Streamlit 雲端上)，就去讀取 Secrets 保險箱
+    try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    else:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-except Exception as e:
-    st.error(f"金鑰讀取失敗，請確認 Secrets 格式是否正確。錯誤訊息: {e}")
-    st.stop()
+    except Exception as e:
+        st.error(f"雲端金鑰讀取失敗，請確認 Secrets 設定。錯誤訊息: {e}")
+        st.stop()
 
 client = gspread.authorize(creds)
 
@@ -37,7 +40,7 @@ df = pd.DataFrame(raw_data[1:], columns=headers)
 # 動態抓取重量欄位名稱
 date_col = [col for col in df.columns if '2026' in col or '2025' in col] 
 weight_col_name = date_col[0] if date_col else '重量紀錄 (g)' 
-
+ 
 # ==========================================
 # (下方接著原本的 2. 定義原子量字典...)
 
