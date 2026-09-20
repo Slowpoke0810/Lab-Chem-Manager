@@ -112,10 +112,11 @@ with tab2:
                     req_weight = (element_masses[elem] / total_molar_mass) * target_weight
                     req_weight = round(req_weight, 4)
                     
-                    # 💡 元素別名對照：讓系統知道 P 就是紅磷
+                    # 💡 元素別名對照：將表單中的特殊寫法加入清單
                     search_targets = [elem]
                     if elem == 'P':
-                        search_targets.extend(['紅磷', '赤磷'])
+                        # 根據 Excel 截圖，加入精確的 'P (紅)' 寫法
+                        search_targets.extend(['P (紅)', 'P(紅)', '紅磷', '赤磷'])
                     
                     inventory = df[df['元素'].astype(str).str.strip().isin(search_targets)]
                     if inventory.empty:
