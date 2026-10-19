@@ -1,6 +1,10 @@
 import streamlit as st
 
 st.set_page_config(page_title="實驗室藥品與長晶備料系統", layout="wide")
+
+print("LAB_APP_STARTED", flush=True)
+st.info("程式已開始執行，正在載入套件與連線 Google Sheets…")
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
