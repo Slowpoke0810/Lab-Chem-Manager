@@ -1,4 +1,6 @@
 import streamlit as st
+
+st.set_page_config(page_title="實驗室藥品與長晶備料系統", layout="wide")
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
@@ -34,6 +36,9 @@ sheet = client.open_by_url(SPREADSHEET_URL).sheet1
 
 # 取得資料並轉為 DataFrame
 raw_data = sheet.get_all_values()
+if not raw_data:
+    st.error("表單為空，請先建立欄位標題。")
+    st.stop()
 headers = raw_data[0] 
 df = pd.DataFrame(raw_data[1:], columns=headers)
 
@@ -68,150 +73,56 @@ ATOMIC_WEIGHTS = {
 }
 
 # ==========================================
-# 3. 網頁介面設計 (UI)
+# 3. 原料、庫存與判定工具
 # ==========================================
-st.set_page_config(page_title="實驗室藥品與長晶備料系統", layout="wide")
-st.title("🧪 實驗室藥品與長晶備料系統")
+import math
 
-# 新增了第三個分頁：庫存管理
-tab1, tab2, tab3 = st.tabs(["📊 藥品庫存總覽", "⚖️ 長晶備料計算器", "📝 庫存管理 (新增/更新)"])
+STATUSES = ['存量充足', '存量不足', '待確認', '已耗盡/遺失']
+LIGHTS = ['自動判定', '🟢 足夠', '🔵 待人工確認', '🔴 不足']
+ALIASES = {'P': ['P', 'P (紅)', 'P(紅)', '紅磷', '赤磷'],
+           'HgS': ['HgS', '硫化汞', '硫化汞 (HgS)', '硫化汞(HgS)']}
 
-# --- 標籤頁 1：庫存總覽 ---
-with tab1:
-    st.subheader("目前的藥品庫存狀態")
-    if date_col:
-        display_cols = ['元素', '廠商/品牌', '純度(%)', '包裝規格 (g)', weight_col_name, '系統判定狀態']
-        st.dataframe(df[display_cols], use_container_width=True)
-    else:
-        st.dataframe(df, use_container_width=True)
 
-# --- 標籤頁 2：長晶計算與庫存比對 ---
-with tab2:
-    st.subheader("化合物重量計算與庫存檢查")
-    col1, col2 = st.columns(2)
-    with col1:
-        formula_input = st.text_input("請輸入化合物化學式 (例: ZnIn2S4, ZrSnS3, InP)", value="ZrSnS3")
-    with col2:
-        target_weight = st.number_input("目標總重量 (g)", min_value=0.1, value=10.0, step=0.1)
-        
-    if st.button("開始計算與檢查", type="primary"):
-        if formula_input:
-            try:
-                parsed = chemparse.parse_formula(formula_input)
-                total_molar_mass = 0.0
-                element_masses = {}
-                for elem, count in parsed.items():
-                    mass = count * ATOMIC_WEIGHTS[elem]
-                    element_masses[elem] = mass
-                    total_molar_mass += mass
-                
-                st.write(f"**{formula_input}** 總分子量: `{total_molar_mass:.4f}`")
-                st.markdown("### 備料清單與庫存狀態")
-                
-                for elem, count in parsed.items():
-                    req_weight = (element_masses[elem] / total_molar_mass) * target_weight
-                    req_weight = round(req_weight, 4)
-                    
-                    # 💡 元素別名對照：將表單中的特殊寫法加入清單
-                    search_targets = [elem]
-                    if elem == 'P':
-                        # 根據 Excel 截圖，加入精確的 'P (紅)' 寫法
-                        search_targets.extend(['P (紅)', 'P(紅)', '紅磷', '赤磷'])
-                    
-                    inventory = df[df['元素'].astype(str).str.strip().isin(search_targets)]
-                    if inventory.empty:
-                        st.error(f"❌ **{elem}**: 需要 **{req_weight}g** ｜ 庫存: **未找到該藥品紀錄**")
-                    else:
-                        total_weight = 0.0
-                        has_unquantified_sufficient = False
-                        bottle_details = [] 
-                        
-                        for idx, row in inventory.iterrows():
-                            # 抓取表格上實際寫的名稱，如果不是原始符號就用【】標註
-                            actual_name = str(row.get('元素', '')).strip()
-                            brand = str(row.get('廠商/品牌', '')).strip()
-                            purity = str(row.get('純度(%)', '')).strip()
-                            
-                            prefix = f"【{actual_name}】" if actual_name != elem else ""
-                            bottle_name = f"{prefix}{brand} ({purity})" if purity else f"{prefix}{brand}"
-                            if not bottle_name.strip(): 
-                                bottle_name = f"{prefix}第 {len(bottle_details)+1} 罐"
-                                
-                            current_weight_str = str(row.get(weight_col_name, '')).strip()
-                            status = str(row.get('系統判定狀態', '')).strip()
-                            
-                            if current_weight_str.replace('.','',1).isdigit():
-                                w = float(current_weight_str)
-                                total_weight += w
-                                bottle_details.append(f"  - 🍾 {bottle_name}: **{w} g**")
-                            else:
-                                if status == "存量充足":
-                                    has_unquantified_sufficient = True
-                                    bottle_details.append(f"  - 🍾 {bottle_name}: **存量充足** (無數字)")
-                                elif status == "已耗盡/遺失":
-                                    bottle_details.append(f"  - 🍾 {bottle_name}: 已耗盡")
-                                else:
-                                    bottle_details.append(f"  - 🍾 {bottle_name}: {status}")
+def numeric_weight(value):
+    try:
+        number = float(str(value).strip())
+        return number if math.isfinite(number) and number >= 0 else None
+    except (ValueError, TypeError):
+        return None
 
-                        details_str = "\n".join(bottle_details)
-                        if total_weight >= req_weight:
-                            st.success(f"✅ **{elem}**: 需要 **{req_weight}g** ｜ 總重量: **{total_weight:.4f}g** ｜ 狀態: **足夠**\n\n**庫存明細:**\n{details_str}")
-                        elif has_unquantified_sufficient:
-                            st.info(f"💡 **{elem}**: 需要 **{req_weight}g** ｜ 總重量: **{total_weight:.4f}g** (不足) ｜ **但有藥品顯示充足，請人工確認！**\n\n**庫存明細:**\n{details_str}")
-                        else:
-                            st.error(f"❌ **{elem}**: 需要 **{req_weight}g** ｜ 總重量: **{total_weight:.4f}g** ｜ 狀態: **重量不足！**\n\n**庫存明細:**\n{details_str}")
-            except Exception as e:
-                st.error(f"解析錯誤: {e}")
 
-# --- 標籤頁 3：庫存管理 (新增/更新) ---
-with tab3:
-    st.header("📝 藥品庫存管理")
-    
-    # 區塊 1：更新現有藥品重量
-    st.subheader("1. 更新現有藥品重量")
-    options = []
-    # 建立選單選項，並記錄對應在 Google Sheet 的行號 (DataFrame index + 2)
-    for i, row in df.iterrows():
-        elem = str(row.get('元素', '')).strip()
-        if not elem: continue
+def recipe(formula, target, use_hgs=False):
+    parsed = chemparse.parse_formula(formula.strip())
+    if not parsed or any(e not in ATOMIC_WEIGHTS or not math.isfinite(n) or n <= 0
+                         for e, n in parsed.items()):
+        raise ValueError('請輸入有效且原子量字典支援的化學式。')
+    molar = sum(ATOMIC_WEIGHTS[e] * n for e, n in parsed.items())
+    moles = target / molar
+    counts = dict(parsed)
+    required = {}
+    if use_hgs:
+        hg = counts.get('Hg', 0)
+        if hg <= 0:
+            raise ValueError('使用 HgS 原料時，目標化學式必須含 Hg。')
+        if counts.get('S', 0) < hg:
+            raise ValueError('HgS 提供的硫會超過目標比例，無法以此配料模式計算。')
+        required['HgS'] = hg * moles * (ATOMIC_WEIGHTS['Hg'] + ATOMIC_WEIGHTS['S'])
+        counts.pop('Hg')
+        counts['S'] -= hg
+    for elem, count in counts.items():
+        if count > 0:
+            required[elem] = count * moles * ATOMIC_WEIGHTS[elem]
+    return molar, required
+
+
+def inventory_summary(frame, material, weight_column):
+    matches = frame[frame['元素'].astype(str).str.strip().isin(ALIASES.get(material, [material]))]
+    total, uncertain, details = 0.0, False, []
+    for _, row in matches.iterrows():
+        name = str(row['元素']).strip()
         brand = str(row.get('廠商/品牌', '')).strip()
-        weight = str(row.get(weight_col_name, '')).strip()
-        options.append(f"{elem} | {brand} | 目前重量: {weight} (行號: {i+2})")
-        
-    selected_option = st.selectbox("選擇要更新的藥品", options)
-    new_w = st.text_input("輸入最新重量 (g)")
-    
-    if st.button("更新重量"):
-        try:
-            row_idx = int(selected_option.split("(行號: ")[1].replace(")", ""))
-            col_idx = headers.index(weight_col_name) + 1
-            sheet.update_cell(row_idx, col_idx, new_w)
-            st.success("✅ 更新成功！請按 F5 重新整理網頁。")
-        except Exception as e:
-            st.error(f"更新失敗: {e}")
-
-    st.divider()
-
-    # 區塊 2：新增藥品
-    st.subheader("2. 新增藥品")
-    colA, colB, colC, colD = st.columns(4)
-    with colA: new_elem = st.text_input("元素符號 (如: Ga)")
-    with colB: new_brand = st.text_input("廠商/品牌")
-    with colC: new_purity = st.text_input("純度(%)")
-    with colD: new_weight_add = st.text_input("重量 (g)")
-    
-    if st.button("新增此藥品"):
-        if new_elem:
-            try:
-                new_row = [""] * len(headers)
-                new_row[headers.index('元素')] = new_elem
-                new_row[headers.index('廠商/品牌')] = new_brand
-                new_row[headers.index('純度(%)')] = new_purity
-                new_row[headers.index(weight_col_name)] = new_weight_add
-                new_row[headers.index('系統判定狀態')] = "存量充足" # 預設狀態
-                sheet.append_row(new_row)
-                st.success("✅ 新增成功！請按 F5 重新整理網頁。")
-            except Exception as e:
-                st.error(f"新增失敗: {e}")
-        else:
-            st.warning("請至少輸入「元素符號」！")
+        purity = str(row.get('純度(%)', '')).strip()
+        status = str(row.get('系統判定狀態', '')).strip()
+        raw = row.get(weight_column, '')
+        weight = numeric_weight(raw)
+        label = f"【{name}】{brand} ({purity})"
